@@ -12,7 +12,7 @@
 
 ## 🌐 ライブデモ
 
-> **→ [https://ai-quiz-app.vercel.app](https://ai-quiz-app.vercel.app)**
+> **→ [https://ai-quiz-app-vert-xi.vercel.app](https://ai-quiz-app-vert-xi.vercel.app)**
 >
 > ※ バックエンドは Render 無料枠のため、**初回アクセスは30〜60秒** かかる場合があります（スリープ解除のため）。
 
