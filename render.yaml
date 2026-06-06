@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ai-quiz-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_URL
+        sync: false        # Neon の接続文字列を Render ダッシュボードで設定
+      - key: GOOGLE_API_KEY
+        sync: false        # Google AI Studio の APIキーを設定
+      - key: CORS_ORIGINS
+        sync: false        # Vercel のデプロイURL を設定（例: https://ai-quiz-app.vercel.app）
