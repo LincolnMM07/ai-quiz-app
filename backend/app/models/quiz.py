@@ -3,27 +3,29 @@ from typing import List, Optional, Union
 
 
 class QuizQuestion(BaseModel):
-    id: Optional[int] = None           # pool question ID (None for non-pool questions)
-    type: str                          # vocab | blank | translation | order | multiple
+    id: Optional[int] = None
+    type: str
     question: str
     options: Optional[List[str]] = None
     answer: Union[int, str]
-    hint_ja: Optional[str] = None      # hint in the user's native language
+    hint_ja: Optional[str] = None
     explanation: Optional[str] = None
+    ease_factor: float = 2.5
+    interval_days: int = 0
 
 
 class GenerateRequest(BaseModel):
     subject: str = "english"
-    source_type: str                   # text | pdf | youtube | url | lyrics | topic
+    source_type: str
     content: str
     title: str
     num_questions: int = Field(default=10, ge=1, le=100)
-    language: str = "ja"               # hint/explanation language
-    study_language: str = "en"         # language being studied (drives TTS voice)
-    quiz_language: str = ""            # language questions are WRITTEN in (empty = same as study_language)
-    difficulty: str = "intermediate"   # beginner | intermediate | advanced
-    study_mode: str = "mixed"          # mixed | listening | vocabulary | grammar | reading | lyrics
-    source_url: Optional[str] = None   # stable URL identifier (youtube/url sources)
+    language: str = "ja"
+    study_language: str = "en"
+    quiz_language: str = ""
+    difficulty: str = "intermediate"
+    study_mode: str = "mixed"
+    source_url: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
@@ -33,8 +35,9 @@ class GenerateResponse(BaseModel):
     study_language: str = "en"
     study_mode: str = "mixed"
     quiz_language: str = ""
-    pool_size: Optional[int] = None    # total questions available in pool
-    gemini_called: bool = False        # true when a new batch was generated
+    pool_size: Optional[int] = None
+    gemini_called: bool = False
+    pool_generating: bool = False  # True when background generation is in progress
 
 
 class SessionSaveRequest(BaseModel):
@@ -49,7 +52,16 @@ class SessionSaveRequest(BaseModel):
 class QuestionResult(BaseModel):
     id: int
     correct: bool
+    quality: int = 3  # SM-2 quality 0-5 (3=correct, 1=wrong)
 
 
 class QuestionResultsRequest(BaseModel):
     results: List[QuestionResult]
+
+
+class QuestionEditRequest(BaseModel):
+    question: Optional[str] = None
+    options: Optional[List[str]] = None
+    answer: Optional[Union[int, str]] = None
+    hint_ja: Optional[str] = None
+    explanation: Optional[str] = None

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { QuizQuestion, GenerateResponse, saveSession, saveQuestionResults } from '../api/client'
+import { QuizQuestion, GenerateResponse, saveSession, saveQuestionResults, editQuestion, getAnkiExportUrl } from '../api/client'
+import FuriganaText from '../components/FuriganaText'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 
@@ -8,6 +9,7 @@ const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 interface QuizState extends GenerateResponse {
   youtube_url?: string
+  furigana?: boolean
 }
 
 const TYPE_LABELS: Record<string, { label: string; color: string }> = {
@@ -136,6 +138,7 @@ export default function Quiz() {
   const studyMode   = data?.study_mode ?? 'mixed'
   const isListening = studyMode === 'listening'
   const youtubeId   = data?.youtube_url ? getYouTubeId(data.youtube_url) : null
+  const furigana    = !!(data?.furigana && studyLang === 'ja')
   // ttsLang    = language the QUESTION TEXT is written in (for reading questions aloud)
   // answerLang = language being STUDIED (for reading vocabulary / answer options aloud)
   // These differ when e.g. studying Japanese with Portuguese-language questions:
@@ -160,6 +163,17 @@ export default function Quiz() {
   const [flipped,    setFlipped]    = useState(false)
   const [showVideo,  setShowVideo]  = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Edit modal
+  const [editOpen,      setEditOpen]      = useState(false)
+  const [editQuestion_, setEditQuestion_] = useState('')
+  const [editOptions,   setEditOptions]   = useState<string[]>([])
+  const [editAnswer,    setEditAnswer]    = useState<number | string>(0)
+  const [editExplain,   setEditExplain]   = useState('')
+  const [editSaving,    setEditSaving]    = useState(false)
+
+  // Local questions (mutable so edits reflect immediately)
+  const [localQs, setLocalQs] = useState<QuizQuestion[]>(data?.questions ?? [])
 
   useEffect(() => { if (!data) navigate('/') }, [data, navigate])
   useEffect(() => { setFreeText(''); setFlipped(false) }, [idx])
@@ -216,9 +230,11 @@ export default function Quiz() {
         const correct = q.type === 'calculation'
           ? normalizeCalc(String(ans[i] ?? '')) === normalizeCalc(String(q.answer))
           : ans[i] === q.answer
-        return { id: q.id, correct }
+        // SM-2 quality: 4=correct, 1=wrong, 0=timeout/skip
+        const quality = ans[i] === -1 || ans[i] === '' ? 0 : correct ? 4 : 1
+        return { id: q.id, correct, quality }
       })
-      .filter((r): r is { id: number; correct: boolean } => r !== null)
+      .filter((r): r is { id: number; correct: boolean; quality: number } => r !== null)
 
     if (results.length > 0) saveQuestionResults(results).catch(() => {})
 
@@ -230,7 +246,7 @@ export default function Quiz() {
 
   if (!data) return null
 
-  const allQs   = data.questions
+  const allQs   = localQs
   const qs      = shuffleOn && shuffledQs.length ? shuffledQs : allQs
   const q       = qs[idx]
   const already = answers.length > idx
@@ -266,6 +282,35 @@ export default function Quiz() {
     }
     setShuffleOn(!shuffleOn)
     setIdx(0); setAnswers([])
+  }
+
+  // ── Edit helpers ────────────────────────────────────────────────────────
+  const openEdit = () => {
+    setEditQuestion_(q.question)
+    setEditOptions(q.options ? [...q.options] : [])
+    setEditAnswer(q.answer)
+    setEditExplain(q.explanation ?? '')
+    setEditOpen(true)
+  }
+
+  const saveEdit = async () => {
+    if (!q.id) return
+    setEditSaving(true)
+    try {
+      await editQuestion(q.id, {
+        question: editQuestion_,
+        options: editOptions.length ? editOptions : undefined,
+        answer: editAnswer,
+        explanation: editExplain || undefined,
+      })
+      setLocalQs(prev => prev.map(item =>
+        item.id === q.id
+          ? { ...item, question: editQuestion_, options: editOptions.length ? editOptions : item.options, answer: editAnswer, explanation: editExplain }
+          : item
+      ))
+      setEditOpen(false)
+    } catch { /* silently ignore */ }
+    finally { setEditSaving(false) }
   }
 
   // ── Results ──────────────────────────────────────────────────────────────
@@ -356,6 +401,33 @@ export default function Quiz() {
               間違えた {wrongQs.length} 問を復習する
             </button>
           )}
+
+          {/* Anki export + share */}
+          <div className="flex gap-2 pt-1">
+            {data!.pool_size && data!.pool_size > 0 && (() => {
+              const sourceKey = encodeURIComponent(`${data!.subject}:${data!.title}`)
+              return (
+                <a
+                  href={getAnkiExportUrl(sourceKey)}
+                  download
+                  className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl bg-white/[0.05] border border-white/[0.08] text-xs font-semibold text-white/50 hover:bg-white/[0.1] hover:text-white/80 transition-colors">
+                  📦 Ankiエクスポート
+                </a>
+              )
+            })()}
+            {'share' in navigator && (
+              <button
+                onClick={() => {
+                  navigator.share({
+                    title: 'QuizAI 結果',
+                    text: `「${data!.title}」 — ${pct}% (${score}/${mcTotal}) 正解！\n#QuizAI`,
+                  }).catch(() => {})
+                }}
+                className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl bg-white/[0.05] border border-white/[0.08] text-xs font-semibold text-white/50 hover:bg-white/[0.1] hover:text-white/80 transition-colors">
+                📤 シェア
+              </button>
+            )}
+          </div>
         </div>
       </div>
     )
@@ -484,6 +556,11 @@ export default function Quiz() {
                 🎧
               </span>
             )}
+            {data.pool_generating && (
+              <span className="text-[10px] bg-cyan-500/10 border border-cyan-500/25 text-cyan-400/80 px-2 py-0.5 rounded-full animate-pulse">
+                ⚙️ 生成中
+              </span>
+            )}
           </div>
         </div>
 
@@ -537,12 +614,15 @@ export default function Quiz() {
 
         {/* Question card */}
         <div className="bg-white/[0.03] border border-white/[0.07] rounded-2xl p-5">
-          {renderQuestion(q.question, isCode)}
+          {furigana && !isCode
+            ? <FuriganaText text={q.question} enabled={furigana} className="text-lg font-medium leading-relaxed block mb-4" />
+            : renderQuestion(q.question, isCode)
+          }
           {isCalc && (
             <p className="text-xs text-orange-300/50 mt-1">🧮 計算して答えを入力してください</p>
           )}
           {!isCode && !isCalc && (
-            <div className="flex gap-2 mt-1">
+            <div className="flex gap-2 mt-1 flex-wrap">
               <button onClick={() => playTTS(q.question, ttsLang, false)}
                 className="flex items-center gap-1 text-xs text-white/30 hover:text-violet-400 transition-colors bg-white/[0.04] hover:bg-white/[0.08] px-3 py-1.5 rounded-lg">
                 🔊 通常
@@ -551,6 +631,12 @@ export default function Quiz() {
                 className="flex items-center gap-1 text-xs text-white/30 hover:text-violet-400 transition-colors bg-white/[0.04] hover:bg-white/[0.08] px-3 py-1.5 rounded-lg">
                 🐢 ゆっくり
               </button>
+              {q.id && (
+                <button onClick={openEdit}
+                  className="flex items-center gap-1 text-xs text-white/20 hover:text-amber-400 transition-colors bg-white/[0.04] hover:bg-white/[0.08] px-3 py-1.5 rounded-lg ml-auto">
+                  ✏️ 編集
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -699,6 +785,59 @@ export default function Quiz() {
           </div>
         )}
       </div>
+
+      {/* ── Edit modal ────────────────────────────────────────────────────── */}
+      {editOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-4">
+          <div className="bg-[#12131f] border border-white/[0.1] rounded-2xl w-full max-w-lg p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-bold text-white/70">問題を編集</p>
+              <button onClick={() => setEditOpen(false)} className="text-white/30 hover:text-white/70 text-lg leading-none">✕</button>
+            </div>
+
+            <div>
+              <p className="text-[10px] text-white/30 mb-1">問題文</p>
+              <textarea value={editQuestion_} onChange={e => setEditQuestion_(e.target.value)} rows={3}
+                className="w-full bg-white/[0.05] border border-white/[0.1] rounded-xl px-3 py-2.5 text-sm placeholder-white/20 focus:outline-none focus:border-amber-400/60 resize-none" />
+            </div>
+
+            {editOptions.length > 0 && (
+              <div>
+                <p className="text-[10px] text-white/30 mb-1">選択肢</p>
+                {editOptions.map((opt, i) => (
+                  <div key={i} className="flex gap-2 mb-1.5">
+                    <button
+                      onClick={() => setEditAnswer(i)}
+                      className={`text-xs px-2 py-2 rounded-lg border shrink-0 font-mono transition-all ${editAnswer === i ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' : 'bg-white/[0.04] border-white/[0.08] text-white/30 hover:border-white/20'}`}>
+                      {String.fromCharCode(65 + i)}
+                    </button>
+                    <input value={opt} onChange={e => setEditOptions(prev => prev.map((o, j) => j === i ? e.target.value : o))}
+                      className="flex-1 bg-white/[0.05] border border-white/[0.1] rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-amber-400/60" />
+                  </div>
+                ))}
+                <p className="text-[10px] text-white/25 mt-1">正解の選択肢ボタンを押して緑にしてください</p>
+              </div>
+            )}
+
+            <div>
+              <p className="text-[10px] text-white/30 mb-1">解説（任意）</p>
+              <textarea value={editExplain} onChange={e => setEditExplain(e.target.value)} rows={2}
+                className="w-full bg-white/[0.05] border border-white/[0.1] rounded-xl px-3 py-2.5 text-sm placeholder-white/20 focus:outline-none focus:border-amber-400/60 resize-none" />
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setEditOpen(false)}
+                className="flex-1 py-3 rounded-xl bg-white/[0.04] border border-white/[0.07] text-sm font-semibold text-white/40 hover:bg-white/[0.08] transition-colors">
+                キャンセル
+              </button>
+              <button onClick={saveEdit} disabled={editSaving || !editQuestion_.trim()}
+                className="flex-[2] py-3 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 text-sm font-bold hover:bg-amber-500/30 disabled:opacity-30 transition-colors">
+                {editSaving ? '保存中...' : '保存する'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -6,9 +6,11 @@ import {
   vagalumeSearch, VagalumeResult,
   aiSearchResources, AiResource,
   getStats, getSessions, Stats, SessionRecord,
+  getSessionsHistory, SessionHistory,
   checkHealth,
 } from '../api/client'
 import { getT, UiLang, UI_LANGS } from '../i18n'
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
 const LANG_SUBJECTS = [
   { id: 'english',    label: 'English',   emoji: '🇬🇧', studyLang: 'en' },
@@ -176,8 +178,19 @@ export default function Home() {
   const [aiError,     setAiError]     = useState('')
 
   // Stats dashboard
-  const [stats,    setStats]    = useState<Stats | null>(null)
-  const [sessions, setSessions] = useState<SessionRecord[]>([])
+  const [stats,       setStats]       = useState<Stats | null>(null)
+  const [sessions,    setSessions]    = useState<SessionRecord[]>([])
+  const [historyData, setHistoryData] = useState<SessionHistory[]>([])
+  const [showChart,   setShowChart]   = useState(false)
+  const [streak,      setStreak]      = useState(0)
+
+  // Furigana toggle (Japanese learners only)
+  const [furigana, setFurigana] = useState(() => localStorage.getItem('furigana') === 'true')
+  const toggleFurigana = (v: boolean) => { localStorage.setItem('furigana', String(v)); setFurigana(v) }
+
+  // Daily goal
+  const [dailyGoal, setDailyGoalState] = useState(() => parseInt(localStorage.getItem('dailyGoal') ?? '20', 10))
+  const setDailyGoal = (n: number) => { localStorage.setItem('dailyGoal', String(n)); setDailyGoalState(n) }
 
   // Auto-sync study language + reset incompatible study mode when subject changes
   useEffect(() => {
@@ -187,10 +200,30 @@ export default function Home() {
     if (disabled?.has(studyMode)) setStudyMode('mixed')
   }, [subject])
 
+  function calcStreak(recs: SessionRecord[]): number {
+    if (!recs.length) return 0
+    const dates = [...new Set(recs.map(s => s.created_at.split('T')[0]))].sort().reverse()
+    const today = localDateStr()
+    let count = 0
+    let expected = today
+    for (const d of dates) {
+      if (d === expected) {
+        count++
+        const dt = new Date(d); dt.setDate(dt.getDate() - 1)
+        expected = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
+      } else { break }
+    }
+    return count
+  }
+
   // Load stats on mount; lightweight key check (no Gemini call)
   useEffect(() => {
     getStats().then(setStats).catch(() => {})
-    getSessions(5).then(setSessions).catch(() => {})
+    getSessions(30).then(recs => {
+      setSessions(recs)
+      setStreak(calcStreak(recs))
+    }).catch(() => {})
+    getSessionsHistory(30).then(setHistoryData).catch(() => {})
     checkHealth().then(h => {
       if (h.status === 'no_key') { persistStatus('no_key'); setApiStatusState('no_key') }
     }).catch(() => {})
@@ -215,7 +248,8 @@ export default function Home() {
       if (result.gemini_called) setDailyUsage(incDailyCount())
       setApiStatus('ok')
       const isYoutube = sourceUrl && (sourceUrl.includes('youtube.com') || sourceUrl.includes('youtu.be'))
-      navigate('/quiz', { state: isYoutube ? { ...result, youtube_url: sourceUrl } : result })
+      const quizState = { ...(isYoutube ? { ...result, youtube_url: sourceUrl } : result), furigana }
+      navigate('/quiz', { state: quizState })
     } catch (e: any) {
       const newStatus = errorToApiStatus(e)
       if (newStatus) setApiStatus(newStatus)
@@ -496,11 +530,11 @@ export default function Home() {
 
         {/* ── Stats ──────────────────────────────────────────────────────── */}
         {stats && stats.sessions > 0 && (
-          <div className="rounded-2xl bg-white/[0.03] border border-white/[0.07] p-4">
-            <div className="grid grid-cols-3 gap-2 mb-3">
+          <div className="rounded-2xl bg-white/[0.03] border border-white/[0.07] p-4 space-y-3">
+            <div className="grid grid-cols-3 gap-2">
               {[
-                { value: stats.sessions,      label: t('sessions'),    color: 'text-violet-400' },
-                { value: stats.total_q,       label: t('totalQ'),      color: 'text-cyan-400' },
+                { value: stats.sessions,           label: t('sessions'),    color: 'text-violet-400' },
+                { value: stats.total_q,            label: t('totalQ'),      color: 'text-cyan-400' },
                 { value: `${stats.avg_accuracy}%`, label: t('avgAccuracy'), color: 'text-emerald-400' },
               ].map(({ value, label, color }) => (
                 <div key={label} className="text-center">
@@ -509,6 +543,54 @@ export default function Home() {
                 </div>
               ))}
             </div>
+
+            {/* Streak + daily goal */}
+            <div className="flex items-center gap-3 border-t border-white/[0.06] pt-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-lg">🔥</span>
+                <span className="text-sm font-bold text-orange-400">{streak}</span>
+                <span className="text-[10px] text-white/30">日連続</span>
+              </div>
+              <div className="flex-1">
+                <div className="flex justify-between text-[10px] text-white/30 mb-1">
+                  <span>本日の目標</span>
+                  <span>{Math.min(dailyUsage, dailyGoal)} / {dailyGoal}</span>
+                </div>
+                <div className="h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-violet-500 to-cyan-500 transition-all duration-500"
+                    style={{ width: `${Math.min(100, (dailyUsage / dailyGoal) * 100)}%` }}
+                  />
+                </div>
+              </div>
+              {historyData.length > 0 && (
+                <button
+                  onClick={() => setShowChart(c => !c)}
+                  className="text-[10px] text-white/30 hover:text-white/60 transition-colors shrink-0">
+                  {showChart ? '▲ グラフ' : '▼ グラフ'}
+                </button>
+              )}
+            </div>
+
+            {/* Progress chart */}
+            {showChart && historyData.length > 0 && (
+              <div className="border-t border-white/[0.06] pt-3">
+                <p className="text-[10px] text-white/30 mb-2">30日間の学習推移</p>
+                <ResponsiveContainer width="100%" height={120}>
+                  <LineChart data={historyData} margin={{ top: 4, right: 4, bottom: 0, left: -28 }}>
+                    <XAxis dataKey="date" tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} tickFormatter={d => d.slice(5)} />
+                    <YAxis tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.25)' }} />
+                    <Tooltip
+                      contentStyle={{ background: '#12131f', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 11 }}
+                      labelStyle={{ color: 'rgba(255,255,255,0.5)' }}
+                    />
+                    <Line type="monotone" dataKey="total_q" stroke="#a78bfa" strokeWidth={2} dot={false} name="問題数" />
+                    <Line type="monotone" dataKey="avg_accuracy" stroke="#34d399" strokeWidth={2} dot={false} name="正答率%" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
             {sessions.length > 0 && (
               <div className="border-t border-white/[0.06] pt-3 space-y-1.5">
                 {sessions.slice(0, 3).map((s: any, i: number) => (
@@ -618,6 +700,38 @@ export default function Home() {
             {studyMode === 'listening' && (
               <p className="text-[10px] text-violet-300/60 mt-2">{t('listeningHint')}</p>
             )}
+          </div>
+
+          {/* Furigana toggle — only for Japanese subject */}
+          {subject === 'japanese' && (
+            <div className="flex items-center justify-between border-t border-white/[0.06] pt-3">
+              <div>
+                <p className="text-xs text-white/60 font-medium">フリガナ表示</p>
+                <p className="text-[10px] text-white/25 mt-0.5">漢字の読み仮名をルビで表示</p>
+              </div>
+              <button
+                onClick={() => toggleFurigana(!furigana)}
+                className={`relative w-10 h-5.5 rounded-full transition-colors duration-200 ${furigana ? 'bg-violet-500' : 'bg-white/10'}`}
+                style={{ height: 22 }}
+              >
+                <span
+                  className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${furigana ? 'translate-x-5' : 'translate-x-0.5'}`}
+                />
+              </button>
+            </div>
+          )}
+
+          {/* Daily goal */}
+          <div className="border-t border-white/[0.06] pt-3">
+            <p className="text-[10px] text-white/30 mb-1.5 font-medium">
+              1日の目標セッション数: <span className="text-white font-bold">{dailyGoal}</span>
+            </p>
+            <input type="range" min={5} max={50} step={5} value={dailyGoal}
+              onChange={e => setDailyGoal(Number(e.target.value))}
+              className="w-full accent-violet-400" />
+            <div className="flex justify-between text-[9px] text-white/20 mt-0.5">
+              <span>5</span><span>25</span><span>50</span>
+            </div>
           </div>
         </div>
 
