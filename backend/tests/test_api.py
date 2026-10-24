@@ -7,6 +7,7 @@ from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services import gemini
 from app.services.gemini import _parse_questions
 from app.services import sources as svc
 
@@ -30,6 +31,27 @@ class TestParseQuestions:
 
     def test_invalid_returns_empty(self):
         assert _parse_questions("not json") == []
+
+
+# ── generate_questions ───────────────────────────────
+class TestGenerateQuestionsContext:
+    def test_uses_all_retrieved_chunks(self, monkeypatch):
+        # 50 chunks of 800 chars = what retrieve_for_quiz returns for 100 questions
+        chunks = [f"CHUNK{i:02d}" + "x" * 793 for i in range(50)]
+        context = "\n\n---\n\n".join(chunks)
+        captured = {}
+
+        def fake_call(prompt):
+            captured["prompt"] = prompt
+            return "[]"
+
+        monkeypatch.setattr(gemini, "_call_gemini", fake_call)
+        gemini.generate_questions(
+            context=context, title="t", subject="english",
+            num_questions=100, difficulty="intermediate", language="ja",
+        )
+        assert "CHUNK00" in captured["prompt"]
+        assert "CHUNK49" in captured["prompt"]
 
 
 # ── sources service ──────────────────────────────────

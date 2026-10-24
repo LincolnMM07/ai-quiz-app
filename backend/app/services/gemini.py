@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 
 GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
+# Upper bound on RAG context passed to Gemini. retrieve_for_quiz returns up to
+# ~50 chunks x 800 chars for a full pool, so this must stay well above 40k.
+MAX_CONTEXT_CHARS = 60_000
+
 # ── Language name maps ──────────────────────────────────────────────────
 STUDY_LANG_NAMES = {
     "en": "English",
@@ -278,7 +282,7 @@ def generate_questions(
     quiz_language: str = "",
 ) -> List[QuizQuestion]:
     """Generate quiz questions from RAG-retrieved context using Gemini."""
-    context_block = f"CONTENT (from: {title}):\n{context[:5000]}"
+    context_block = f"CONTENT (from: {title}):\n{context[:MAX_CONTEXT_CHARS]}"
     prompt = _build_question_prompt(
         context_block=context_block,
         title=title,
