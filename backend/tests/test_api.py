@@ -21,9 +21,9 @@ class TestParseQuestions:
         assert len(result) == 1
 
     def test_strips_markdown(self):
-        raw = '```json\n[{"type":"blank","answer":1}]\n```'
+        raw = '```json\n[{"type":"blank","question":"Q?","options":["a","b"],"answer":1}]\n```'
         result = _parse_questions(raw)
-        assert result[0]["answer"] == 1
+        assert result[0].answer == 1
 
     def test_empty_returns_empty(self):
         assert _parse_questions("") == []
