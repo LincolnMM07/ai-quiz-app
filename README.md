@@ -23,7 +23,7 @@
 | 機能 | 説明 |
 |------|------|
 | 📚 マルチ科目対応 | 英語・日本語・スペイン語・数学・歴史・理科・プログラミング・TOEIC など12科目 |
-| 🧠 RAGパイプライン | PDF/URLをベクトル化して関連箇所を抽出し、高品質な問題を生成 |
+| 🧠 RAGパイプライン | PDF/URLをGeminiで多言語ベクトル化し、k-meansで教材全体の話題から偏りなく箇所を選んで問題を生成 |
 | 🎥 YouTube字幕対応 | 動画の字幕から自動で問題生成 |
 | 🎵 歌詞対応 | 洋楽・邦楽・ポルトガル語楽曲の歌詞から語学問題を生成 |
 | 💾 問題プールシステム | 同一ソースから100問生成・DB保存 → 2回目以降はAPI不使用で即時提供 |
@@ -157,7 +157,7 @@ Render ダッシュボード → Environment → `CORS_ORIGINS` を Vercel URL �
 |---------|------|
 | バックエンド | FastAPI, Python 3.11, Pydantic v2 |
 | AI / LLM | Google Gemini 2.5 Flash（無料枠 500回/日） |
-| RAG / Vector DB | ChromaDB, LangChain Text Splitters |
+| RAG / Vector DB | ChromaDB, Gemini Embedding (gemini-embedding-001), LangChain Text Splitters |
 | データベース | PostgreSQL (Neon), SQLAlchemy 2.0 |
 | 音声合成 | Microsoft Edge TTS (Neural) |
 | フロントエンド | React 18, TypeScript, Tailwind CSS v3, Vite |
